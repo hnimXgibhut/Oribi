@@ -483,3 +483,38 @@ def test_sql_col_formatting_with_keywords_and_identifiers():
     assert _sql_col("order") == '"order"'
     assert _sql_col("col with space") == '"col with space"'
     assert _sql_col('col"quote') == '"col""quote"'
+
+
+def _repeated_order_revenue_frame():
+    return pd.DataFrame(
+        {
+            "order_id": [1, 1, 2, 2],
+            "line_id": [1, 2, 3, 4],
+            "revenue": [20.0, 20.0, 30.0, 30.0],
+        }
+    )
+
+
+def test_compact_context_never_shows_dedup_sql_without_its_caveat():
+    context = inspect(_repeated_order_revenue_frame())
+
+    for budget in range(100, 5001, 25):
+        report = context.to_context(max_chars=budget)
+        assert len(report) <= budget
+        if "- total_revenue" in report:
+            assert "coincidental" in report, budget
+
+
+def test_compact_context_keeps_both_sql_and_caveat_with_room():
+    report = inspect(_repeated_order_revenue_frame()).to_context(max_chars=5000)
+
+    assert "- total_revenue" in report
+    assert "coincidental" in report
+    assert "[Context truncated.]" not in report
+
+
+def test_metric_caveats_stay_in_structured_output():
+    payload = inspect(_repeated_order_revenue_frame()).to_dict()
+    total = next(m for m in payload["metrics"] if m["name"] == "total_revenue")
+
+    assert any("coincidental" in caveat for caveat in total["caveats"])
