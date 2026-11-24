@@ -1,10 +1,59 @@
 import warnings
+from decimal import Decimal
 
 import numpy as np
 import pandas as pd
 import pytest
 
 from oribi import ProfileOptions, inspect
+
+
+@pytest.mark.parametrize("repeat", [1, 2])
+def test_decimal_prices_have_numeric_statistics_and_measure_semantics(repeat):
+    values = [Decimal("1.01"), Decimal("2.02"), Decimal("3.03")]
+    frame = pd.DataFrame({"price": pd.Series(values * repeat + [None], dtype=object)})
+    original = frame.copy()
+    column = inspect(frame).get_column("price")
+    stats = column.statistics
+
+    assert column.dtype == "object"
+    assert column.logical_type == "numeric"
+    assert column.semantic.role == "measure"
+    assert any(e.code == "decimal_values" for e in column.semantic.evidence)
+    assert stats.missing_count == 1
+    assert stats.distinct_count == 3
+    assert stats.minimum == pytest.approx(1.01)
+    assert stats.maximum == pytest.approx(3.03)
+    assert stats.mean == pytest.approx(2.02)
+    assert stats.median == pytest.approx(2.02)
+    assert stats.quantiles["0.5"] == pytest.approx(2.02)
+    assert dict(stats.top_values) == dict.fromkeys(values, repeat)
+    pd.testing.assert_frame_equal(frame, original)
+    assert all(type(value) is Decimal for value in frame["price"].dropna())
+
+
+def test_decimal_numeric_moments_exclude_infinities():
+    series = pd.Series(
+        [Decimal("-Infinity"), Decimal("1.5"), Decimal("2.5"), Decimal("Infinity"), Decimal("NaN")],
+        dtype=object,
+    )
+    column = inspect(pd.DataFrame({"price": series})).get_column("price")
+
+    assert column.logical_type == "numeric"
+    assert column.statistics.missing_count == 1
+    assert column.statistics.minimum == pytest.approx(1.5)
+    assert column.statistics.maximum == pytest.approx(2.5)
+    assert column.statistics.mean == pytest.approx(2.0)
+
+
+def test_mixed_decimal_and_numeric_string_stays_non_numeric():
+    series = pd.Series([Decimal("1.01"), "2.02", None], dtype=object)
+    column = inspect(pd.DataFrame({"price": series})).get_column("price")
+
+    assert column.logical_type == "unknown"
+    assert column.semantic.role != "measure"
+    assert column.statistics.mean is None
+    assert column.statistics.missing_count == 1
 
 
 def test_large_integer_bounds_keep_exact_precision():

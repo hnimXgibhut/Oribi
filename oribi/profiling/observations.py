@@ -26,6 +26,7 @@ class ColumnObservation:
     date_evidence: Evidence | None = None
     distinct_count_exact: bool = True
     fallback_counts: tuple[pd.Series, bool] | None = None
+    is_decimal: bool = False
 
 
 class AnalysisSession:
@@ -66,6 +67,7 @@ class AnalysisSession:
             fallback_counts = (counts, original_values)
             distinct = len(counts)
         date_evidence = None
+        is_decimal = False
         if pd.api.types.is_bool_dtype(series.dtype):
             logical = "boolean"
         elif pd.api.types.is_datetime64_any_dtype(series.dtype):
@@ -90,11 +92,12 @@ class AnalysisSession:
         elif series.dtype == object or pd.api.types.is_string_dtype(series.dtype):
             values = series.dropna()
             kind = "empty" if values.empty else pd.api.types.infer_dtype(values, skipna=False)
+            is_decimal = kind == "decimal"
             if kind == "empty":
                 logical = "unknown"
             elif kind == "boolean":
                 logical = "boolean"
-            elif kind in {"integer", "floating", "mixed-integer-float"}:
+            elif kind in {"integer", "floating", "mixed-integer-float", "decimal"}:
                 logical = "numeric"
             elif kind == "string":
                 logical = "text"
@@ -114,6 +117,7 @@ class AnalysisSession:
             date_evidence=date_evidence,
             distinct_count_exact=distinct_count_exact,
             fallback_counts=fallback_counts,
+            is_decimal=is_decimal,
         )
         self.observations[name] = obs
         return obs

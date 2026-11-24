@@ -1,5 +1,6 @@
 import json
 import sqlite3
+from decimal import Decimal
 
 import pandas as pd
 import pytest
@@ -274,6 +275,71 @@ def _eval_sql(frame: pd.DataFrame, sql: str) -> float:
         row = conn.execute(query).fetchone()
         assert row is not None and row[0] is not None
         return float(row[0])
+
+
+def test_decimal_measure_ratio_avoids_integer_division():
+    frame = pd.DataFrame({
+        "order_id": [1, 2],
+        "revenue": pd.Series([Decimal("1.00"), Decimal("2.00")], dtype=object),
+    })
+    metric = _metric(inspect(frame), "average_order_value")
+    # SQLite can store whole values as integers in a NUMERIC column.
+    assert _eval_sql(frame.assign(revenue=[1, 2]), metric.sql) == 1.5
+
+
+@pytest.mark.parametrize(("revenue", "profit"), [(100.0, None), (None, 40.0)])
+def test_metrics_withhold_sums_with_an_incomplete_determinant(revenue, profit):
+    frame = pd.DataFrame({
+        "order_id": pd.Series([1, 1, 2, 2, None], dtype="Int64"),
+        "revenue": [20.0, 20.0, 30.0, 30.0, revenue],
+        "profit": [2.0, 2.0, 9.0, 9.0, profit],
+    })
+    context = inspect(frame)
+    ambiguous = "revenue" if revenue is not None else "profit"
+    covered = "profit" if ambiguous == "revenue" else "revenue"
+
+    assert all(ambiguous not in metric.columns for metric in context.metrics)
+    assert _eval_sql(frame, _metric(context, f"total_{covered}").sql) == (
+        11.0 if covered == "profit" else 50.0
+    )
+
+
+@pytest.mark.parametrize("include_empty_row", [False, True])
+def test_deduplicated_metrics_only_require_keys_for_observed_measures(include_empty_row):
+    frame = pd.DataFrame({
+        "order_id": pd.Series([1, 1, 2, 2, None], dtype="Int64"),
+        "revenue": [20.0, 20.0, 30.0, 30.0, None],
+        "profit": [2.0, 2.0, 9.0, 9.0, None],
+    })
+    if not include_empty_row:
+        frame = frame.iloc[:-1]
+    context = inspect(frame)
+
+    assert _eval_sql(frame, _metric(context, "total_revenue").sql) == 50.0
+    assert _eval_sql(frame, _metric(context, "average_order_value").sql) == 25.0
+    assert _eval_sql(frame, _metric(context, "profit_margin").sql) == pytest.approx(11.0 / 50.0)
+
+
+def test_complete_determinant_can_replace_incomplete_determinant():
+    frame = pd.DataFrame({
+        "order_id": pd.Series([1, 1, 2, 2, None], dtype="Int64"),
+        "invoice_id": [11, 11, 12, 12, 13],
+        "revenue": [20.0, 20.0, 30.0, 30.0, 100.0],
+    })
+    total = _metric(inspect(frame), "total_revenue")
+
+    assert "GROUP BY invoice_id" in total.sql
+    assert _eval_sql(frame, total.sql) == 150.0
+
+
+def test_missing_entity_key_does_not_withhold_line_item_sum():
+    frame = pd.DataFrame({
+        "order_id": pd.Series([1, 1, 2, 2, None], dtype="Int64"),
+        "revenue": [20.0, 21.0, 30.0, 31.0, 100.0],
+    })
+    total = _metric(inspect(frame), "total_revenue")
+
+    assert _eval_sql(frame, total.sql) == 202.0
 
 
 def test_repeated_order_totals_across_line_items_deduplicate_aov_total_and_ratios():

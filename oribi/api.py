@@ -138,6 +138,7 @@ def inspect(df: pd.DataFrame, *, options: ProfileOptions | None = None) -> Datas
             nrows,
             has_fractional_values=has_fractional_values,
             is_bool_dtype=pd.api.types.is_bool_dtype(observations[name].series.dtype),
+            is_decimal=observations[name].is_decimal,
             is_float=pd.api.types.is_float_dtype(observations[name].series.dtype),
             date_evidence=observations[name].date_evidence,
         )
@@ -214,7 +215,12 @@ def inspect(df: pd.DataFrame, *, options: ProfileOptions | None = None) -> Datas
             "Pandas could not compare rows with the available cell values.",
         ))
     metric_columns = [column for column in columns if exact_distinct[column.name]]
-    entity_constant_measures, entity_determinants, multi_parent_pairs = detect_metric_grain_facts(
+    (
+        entity_constant_measures,
+        entity_determinants,
+        multi_parent_pairs,
+        partially_covered_measures,
+    ) = detect_metric_grain_facts(
         df,
         metric_columns,
         relationships,
@@ -230,6 +236,7 @@ def inspect(df: pd.DataFrame, *, options: ProfileOptions | None = None) -> Datas
         entity_constant_measures=entity_constant_measures,
         entity_determinants=entity_determinants,
         multi_parent_pairs=multi_parent_pairs,
+        partially_covered_measures=partially_covered_measures,
     )
     return DatasetContext(
         profile=DatasetProfile(

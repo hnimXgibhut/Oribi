@@ -42,9 +42,12 @@ def infer_semantic(
     *,
     has_fractional_values: bool,
     is_bool_dtype: bool,
+    is_decimal: bool = False,
     is_float: bool = False,
     date_evidence: Evidence | None = None,
 ) -> SemanticContext:
+    # Decimal values support the same measure heuristics as native floats.
+    is_float = is_float or is_decimal
     votes: dict[str, float] = {}
     evidence: list[Evidence] = []
     distinct = stats.distinct_count
@@ -138,13 +141,18 @@ def infer_semantic(
 
     if logical_type == "numeric":
         measure_score = .48
-        evidence.append(Evidence("numeric_type", "Column has a numeric dtype"))
+        if is_decimal:
+            evidence.append(Evidence("decimal_values", "Observed non-missing values are Decimal numbers"))
+        else:
+            evidence.append(Evidence("numeric_type", "Column has a numeric dtype"))
         if measure_name and not is_low_cardinality_numeric:
             measure_score += .08
             evidence.append(Evidence("name_measure_hint", "Column name supports a quantitative measure"))
         if is_float and not label_name and not explicit_identifier_name:
             measure_score += .08
-            evidence.append(Evidence("floating_point_type", "Floating-point values are consistent with a quantitative measure"))
+            # Decimal values may be stored as integers by the SQL engine.
+            if not is_decimal:
+                evidence.append(Evidence("floating_point_type", "Floating-point values are consistent with a quantitative measure"))
         elif not label_name and not is_low_cardinality_numeric and row_count and rate < .98 and distinct > min(20, max(3, row_count // 10)):
             measure_score += .08
             evidence.append(Evidence("repeated_numeric_measure_values", "Numeric values repeat across rows without having low categorical cardinality"))
